@@ -33,7 +33,9 @@
 
   .panelbox{border:1px solid var(--line);border-radius:2px;background:var(--ink-2);margin-bottom:14px}
   .panelbox canvas{display:block;width:100%}
-  #gram{height:300px} #spec{height:110px}
+  .gramwrap{position:relative;line-height:0}
+  #gramAxis{position:absolute;inset:0;pointer-events:none}
+  #gram{height:300px} #gramAxis{height:300px} #spec{height:110px}
   .cap{display:flex;justify-content:space-between;padding:7px 11px;border-top:1px solid var(--line);
     color:var(--dim);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase}
 
@@ -80,36 +82,28 @@
     <div class="readout">
       x <span id="rx">0.0</span> &nbsp; y <span id="ry">5.0</span><br>
       bandwidth <span id="rbw">0 Hz</span><br>
-      detuning <span id="rdev">0%</span>
+      stretch <span id="rstr">1.000</span> &nbsp; (partial 10 at <span id="rp10">10.00</span>&times;f<sub>0</sub>)
     </div>
   </div>
 
   <div>
-    <div class="panelbox"><canvas id="gram"></canvas>
+    <div class="panelbox"><div class="gramwrap"><canvas id="gram"></canvas><canvas id="gramAxis"></canvas></div>
       <div class="cap"><span>spectrogram &nbsp;·&nbsp; ~5 s</span><span>60 Hz — 6 kHz (log)</span></div></div>
     <div class="panelbox"><canvas id="spec"></canvas>
-      <div class="cap"><span>partials now</span><span>bar width = bandwidth</span></div></div>
+      <div class="cap"><span>partials now</span></div></div>
   </div>
 </div>
 
 <div class="panel">
   <div class="ctl">
-    <label>Detuning at x=0 <b id="vDev">0.30</b></label>
-    <input type="range" id="dev" min="0" max="0.7" step="0.01" value="0.3">
-    <div class="hint">How far bottom-edge partials sit off the harmonic series.</div>
-  </div>
-  <div class="ctl">
-    <label>Detuning growth across x <b id="vGrow">2.00</b></label>
-    <input type="range" id="grow" min="0" max="4" step="0.05" value="2">
-    <div class="hint">At 0 the detuning stays fixed and the right edge sounds the same at every y.</div>
+    <label>Stretch (lower half) <b id="vStr">0.15</b></label>
+    <input type="range" id="str" min="0" max="0.35" step="0.005" value="0.15">
+    <div class="hint">Partial k sits at k^(1+s)&middot;f₀ everywhere below the centre line. At s=0 that's the harmonic series.</div>
   </div>
   <div class="ctl">
     <label>Fundamental <b id="vF0">131 Hz</b></label>
     <input type="range" id="f0" min="55" max="330" step="1" value="131">
-    <div class="row">
-      <button id="reroll">New detuning</button>
-      <button id="hold">Hold on release</button>
-    </div>
+    <div class="row"><button id="hold">Hold on release</button></div>
   </div>
   <div class="ctl">
     <label>Level <b id="vVol">0.60</b></label>
@@ -122,25 +116,23 @@
 <script>
 const N = 10;
 let ctx=null, master=null, analyser=null, freqData=null, noiseSrc=null, parts=[], running=false;
-let rand = new Array(N).fill(0).map(()=>Math.random()*2-1);
 let X=0, Y=0.5, holding=false, sounding=false, dragging=false;
-let last = {freqs:new Array(N).fill(131), amps:new Array(N).fill(0), bws:new Array(N).fill(1), spread:0};
+let last = {freqs:new Array(N).fill(131), amps:new Array(N).fill(0), bws:new Array(N).fill(1), s:0};
 const el = id => document.getElementById(id);
-const P = { dev:0.3, grow:2, f0:131, vol:0.6 };
+const P = { str:0.15, f0:131, vol:0.6 };
 
-/* ---------- model (as in the first version) ---------- */
+/* ---------- model ---------- */
 function compute(x,y){
   const d = Math.abs(y-0.5)*2;
-  const inh = (y < 0.5) ? d : 0;
-  const spread = P.dev * inh * (1 + x*P.grow);
+  const s = (y < 0.5) ? P.str : 0;             // fixed spectrum per half; y moves amplitude only
   const freqs=[], amps=[], bws=[];
   for(let k=1;k<=N;k++){
-    const f = (k===1) ? P.f0 : k*P.f0*(1 + spread*rand[k-1]);
+    const f = P.f0 * Math.pow(k, 1+s);         // k=1 always lands on f0
     const a = (k===1) ? 1 : (1/k) * Math.pow(d, (k-1)*0.35);
     const bw = Math.max(1, x*x*(P.f0*3 + f*0.5));
-    freqs.push(Math.min(Math.max(f,20),18000)); amps.push(a); bws.push(bw);
+    freqs.push(Math.min(f,18000)); amps.push(a); bws.push(bw);
   }
-  return {freqs, amps, bws, d, spread};
+  return {freqs, amps, bws, d, s};
 }
 
 /* ---------- audio ---------- */
@@ -177,7 +169,8 @@ function apply(){
   el('rx').textContent=(X*10).toFixed(1);
   el('ry').textContent=(Y*10).toFixed(1);
   el('rbw').textContent=Math.round(s.bws[0])+' Hz';
-  el('rdev').textContent=Math.round(s.spread*100)+'%';
+  el('rstr').textContent=(1+s.s).toFixed(3);
+  el('rp10').textContent=Math.pow(10,1+s.s).toFixed(2);
   if(!running) return;
 
   const t=ctx.currentTime, tau=0.025;
@@ -221,18 +214,28 @@ const fx = f => (Math.log(Math.max(f,FMIN))-LMIN)/LSPAN;
 const padCv=el('padCanvas'), pcx=padCv.getContext('2d');
 const spec=el('spec'), scx=spec.getContext('2d');
 const gram=el('gram'), gcx=gram.getContext('2d');
+const gaxis=el('gramAxis'), acx=gaxis.getContext('2d');
 let dims={};
 
 function fitAll(){
   const dpr=Math.min(devicePixelRatio||1,2);
-  [[padCv,pcx],[spec,scx],[gram,gcx]].forEach(([c,x])=>{
+  [[padCv,pcx],[spec,scx],[gram,gcx],[gaxis,acx]].forEach(([c,x])=>{
     const r=c.getBoundingClientRect();
     c.width=Math.max(1,r.width*dpr); c.height=Math.max(1,r.height*dpr);
     x.setTransform(dpr,0,0,dpr,0,0);
     dims[c.id]={w:r.width,h:r.height};
   });
   gcx.fillStyle='#141d23'; gcx.fillRect(0,0,dims.gram.w,dims.gram.h);
-  drawPad();
+  drawGramAxis(); drawPad();
+}
+
+/* labels live on their own layer, so the scroll never touches them */
+function drawGramAxis(){
+  const {w,h}=dims.gramAxis; acx.clearRect(0,0,w,h);
+  acx.font='9px ui-monospace,monospace';
+  [100,500,1000,5000].forEach(f=>{ const py=(1-fx(f))*h;
+    acx.fillStyle='rgba(37,51,60,.85)'; acx.fillRect(0,py,w,0.5);
+    acx.fillStyle='rgba(123,139,149,.85)'; acx.fillText(f>=1000?(f/1000)+'k':f,4,py-2); });
 }
 
 function drawPad(){
@@ -301,10 +304,6 @@ function drawGram(){
     }
     gcx.fillRect(w-2,py,2,1);
   }
-  gcx.font='9px ui-monospace,monospace';
-  [100,500,1000,5000].forEach(f=>{ const py=(1-fx(f))*h;
-    gcx.fillStyle='rgba(37,51,60,.8)'; gcx.fillRect(0,py,w,0.5);
-    gcx.fillStyle='rgba(123,139,149,.8)'; gcx.fillText(f>=1000?(f/1000)+'k':f,4,py-2); });
 }
 function frame(){ drawSpec(); drawGram(); requestAnimationFrame(frame); }
 
@@ -314,11 +313,9 @@ function bind(id,key,fmt){
   out.textContent=fmt(P[key]);
   s.addEventListener('input',()=>{ P[key]=parseFloat(s.value); out.textContent=fmt(P[key]); apply(); });
 }
-bind('dev','dev',v=>v.toFixed(2));
-bind('grow','grow',v=>v.toFixed(2));
+bind('str','str',v=>v.toFixed(3));
 bind('f0','f0',v=>Math.round(v)+' Hz');
 bind('vol','vol',v=>v.toFixed(2));
-el('reroll').addEventListener('click',()=>{ rand=rand.map(()=>Math.random()*2-1); apply(); });
 el('hold').addEventListener('click',e=>{ holding=!holding; e.target.classList.toggle('on',holding);
   if(!holding && !dragging){ sounding=false; apply(); } });
 el('startBtn').addEventListener('click',async()=>{ build(); await ctx.resume(); running=true; el('veil').remove(); apply(); });
