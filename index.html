@@ -123,7 +123,9 @@ const P = { str:0.15, f0:131, vol:0.6 };
 
 /* ---------- model ---------- */
 function compute(x,y){
-  const d = Math.abs(y-0.5)*2;
+  const DEAD = 0.1;                            // silent band: y 4.5 to 5.5
+  const raw = Math.abs(y-0.5)*2;
+  const d = Math.max(0, (raw - DEAD)/(1 - DEAD));
   const s = (y < 0.5) ? P.str : 0;             // fixed spectrum per half; y moves amplitude only
   const freqs=[], amps=[], bws=[];
   for(let k=1;k<=N;k++){
