@@ -36,7 +36,7 @@
   .panelbox canvas{display:block;width:100%}
   .gramwrap{position:relative;line-height:0}
   #gramAxis{position:absolute;inset:0;pointer-events:none}
-  #gram{height:300px} #gramAxis{height:300px} #spec{height:110px}
+  #gram{height:300px} #gramAxis{height:300px} #spec{height:110px} #scope{height:110px}
   .cap{display:flex;justify-content:space-between;padding:7px 11px;border-top:1px solid var(--line);
     color:var(--dim);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase}
 
@@ -94,6 +94,8 @@
       <div class="cap"><span>spectrogram &nbsp;·&nbsp; ~5 s</span><span>60 Hz — 6 kHz (log)</span></div></div>
     <div class="panelbox"><canvas id="spec"></canvas>
       <div class="cap"><span>partials now</span></div></div>
+    <div class="panelbox"><canvas id="scope"></canvas>
+      <div class="cap"><span>waveform</span><span>3 cycles of f<sub>0</sub></span></div></div>
   </div>
 </div>
 
@@ -113,7 +115,7 @@
 
 <script>
 const N = 10;
-let ctx=null, master=null, analyser=null, freqData=null, noiseSrc=null, parts=[], running=false;
+let ctx=null, master=null, analyser=null, freqData=null, timeData=null, noiseSrc=null, parts=[], running=false;
 let wideGain=null, colGain={};
 let X=0, Y=0.5, holding=false, sounding=false, dragging=false;
 let last = {freqs:new Array(N).fill(131), amps:new Array(N).fill(0), bws:new Array(N).fill(1), s:0};
@@ -165,6 +167,7 @@ function build(){
   analyser = ctx.createAnalyser(); analyser.fftSize=8192; analyser.smoothingTimeConstant=0;
   analyser.minDecibels=-96; analyser.maxDecibels=-12;
   freqData = new Uint8Array(analyser.frequencyBinCount);
+  timeData = new Uint8Array(analyser.fftSize);
   master.connect(lim); lim.connect(ctx.destination); lim.connect(analyser);
 
   const len = ctx.sampleRate*2, buf = ctx.createBuffer(1,len,ctx.sampleRate), ch = buf.getChannelData(0);
@@ -283,11 +286,12 @@ const padCv=el('padCanvas'), pcx=padCv.getContext('2d');
 const spec=el('spec'), scx=spec.getContext('2d');
 const gram=el('gram'), gcx=gram.getContext('2d');
 const gaxis=el('gramAxis'), acx=gaxis.getContext('2d');
+const scope=el('scope'), wcx=scope.getContext('2d');
 let dims={};
 
 function fitAll(){
   const dpr=Math.min(devicePixelRatio||1,2);
-  [[padCv,pcx],[spec,scx],[gram,gcx],[gaxis,acx]].forEach(([c,x])=>{
+  [[padCv,pcx],[spec,scx],[gram,gcx],[gaxis,acx],[scope,wcx]].forEach(([c,x])=>{
     const r=c.getBoundingClientRect();
     c.width=Math.max(1,r.width*dpr); c.height=Math.max(1,r.height*dpr);
     x.setTransform(dpr,0,0,dpr,0,0);
@@ -376,6 +380,33 @@ function drawSpec(){
   }
 }
 
+/* ---------- waveform ---------- */
+function drawScope(){
+  const {w,h}=dims.scope; wcx.clearRect(0,0,w,h);
+  const mid=h/2;
+  wcx.strokeStyle='#1c2830'; wcx.lineWidth=1;
+  wcx.beginPath(); wcx.moveTo(0,mid); wcx.lineTo(w,mid); wcx.stroke();
+  if(!running) return;
+
+  analyser.getByteTimeDomainData(timeData);
+
+  /* three periods of the current fundamental, locked to a rising zero crossing
+     so the trace stands still instead of sliding */
+  const span=Math.min(timeData.length-1, Math.round(ctx.sampleRate/P.f0*3));
+  let start=0;
+  for(let i=1;i<timeData.length-span;i++){
+    if(timeData[i-1]<128 && timeData[i]>=128){ start=i; break; }
+  }
+  wcx.strokeStyle=(Y<0.5)?'rgba(196,87,107,.9)':'rgba(230,161,76,.9)';
+  wcx.lineWidth=1.25; wcx.beginPath();
+  for(let px=0;px<=w;px++){
+    const v=(timeData[start+Math.round(px/w*span)]-128)/128;
+    const y=mid-v*(mid-6);
+    px?wcx.lineTo(px,y):wcx.moveTo(px,y);
+  }
+  wcx.stroke();
+}
+
 let binMap=null;
 function buildBinMap(h){
   if(!analyser) return;
@@ -407,7 +438,7 @@ function drawGram(){
     gcx.fillRect(w-2,py,2,1);
   }
 }
-function frame(){ drawSpec(); drawGram(); requestAnimationFrame(frame); }
+function frame(){ drawSpec(); drawGram(); drawScope(); requestAnimationFrame(frame); }
 
 /* ---------- controls ---------- */
 function bind(id,key,fmt){
