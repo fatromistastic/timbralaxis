@@ -122,6 +122,7 @@ let X=0, Y=0.5, holding=false, sounding=false, dragging=false;
 let last = {freqs:new Array(N).fill(131), amps:new Array(N).fill(0), bws:new Array(N).fill(1), s:0};
 const el = id => document.getElementById(id);
 const P = { f0:131, vol:0.6 };
+const NOISE_TRIM = 0.6;
 
 /* the space narrows as the noise takes over: full height until x=5, a sliver at x=10 */
 function halfHeight(x){
@@ -237,7 +238,7 @@ function apply(){
   const mix = Math.pow(X,1.3);
   const gS  = Math.cos(mix*Math.PI/2);
   const comp = X>0.02 ? Math.min(3, Math.pow(1/X,0.7)) : 3;
-  const gN = Math.sin(mix*Math.PI/2)*comp*0.8;
+  const gN = Math.sin(mix*Math.PI/2)*comp*0.8*NOISE_TRIM;
 
   /* handover: partials out, full-spectrum noise in, across the right half */
   const c = s.c;
@@ -250,7 +251,7 @@ function apply(){
   colGain.brown.gain.setTargetAtTime(gb*1.45,t,tau);   // brown needs lifting: equal power,
   colGain.pink .gain.setTargetAtTime(gp*1.00,t,tau);   // but its energy sits where the ear
   colGain.white.gain.setTargetAtTime(gw*1.00,t,tau);   // is least sensitive
-  wideGain.gain.setTargetAtTime(wideLevel*0.60, t, tau);
+  wideGain.gain.setTargetAtTime(wideLevel*0.60*NOISE_TRIM, t, tau);
 
   for(let k=0;k<N;k++){
     const p=parts[k], f=s.freqs[k], bw=s.bws[k];
